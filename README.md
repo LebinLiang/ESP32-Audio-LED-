@@ -1,69 +1,81 @@
-# ESP32-S3 Audio Reactive LED Controller 🎵✨
+# ESP32 Audio-Reactive LED Controller (ESP32 音乐律动氛围灯)
 
-基于 ESP32/ESP32-S3 的 I2S 音频拾音分析与 WS2812 灯带拾音灯项目。通过 I2S 麦克风实时采集音频，使用 `arduinoFFT` 分析音频频谱，提供分频段的动态音乐灯效，并内置 Web 服务器供手机实时期配置灯光色彩与特效。
+这是一个基于 ESP32 的高性能音频律动 LED 控制器项目。通过 I2S 数字麦克风实时采集音频，利用 FFT（快速傅里叶变换）对音频进行离散频率分析，并驱动 WS2812B 灯带实现多种炫酷的音频同步灯光特效。内置了 Web 服务，允许用户通过手机或电脑浏览器实时控制所有的灯光参数。
 
-## ✨ 特性 (Features)
+## ✨ 核心特性
 
-*   **双核调度 (Dual-Core Processing)**：音频采样与 FFT 计算在 Core 1 执行，WiFi 网络与 Web 服务保留在 Core 0，保证高负载 FFT 及大量 LED 刷新操作不干扰网络通讯。
-*   **原生 AP 修复 (Native AP Fix)**：巧妙使用 `ESP-IDF` 原生 API 配置 WiFi 广播，完美绕过 ESP32-S3 在部分 Arduino Core 版本下 `WiFi.softAP()` 省电休眠导致无广播的玄学 Bug。
-*   **DSP 噪声过滤**：内建高通滤波器 (HPF)，自动消除 I2S 麦克风的直流漂移和环境 50Hz/低频沉闷底噪。
-*   **Web 实时控制 UI**：通过手机连接 WiFi 即可调整：
-    *   全局亮度调节
-    *   多区域 (Zones) 独立控制
-    *   全彩取色器 (RGB)
-    *   调试信息输出开关
-*   **7种独立灯效 (Effects)**：`Solid(纯色)`, `Breathe(呼吸)`, `Rainbow(彩虹)`, `Chase(追逐)`, `Off(关闭)`, `Audio Blink(随音量闪烁)`, `Audio VU(音频多段音量柱)`。
+- **🎶 实时 FFT 分析**：将音频分为 6 个独立的频段，分别驱动不同区域的 LED。
+- **🎤 纯数字音频采集**：支持 I2S 麦克风（如 INMP441），带动态高通滤波器，自动滤除底噪和直流偏移。
+- **🌐 独立 Web 控制界面**：ESP32 自动开启 AP 热点（无须路由器），手机直连进行参数调整。
+- **⚙️ 动态信号校准**：支持在网页端实时调整**底噪门限 (Noise Floor)** 和 **满载峰值 (Peak Signal)**，适应不同环境音量。
+- **🌈 多区域独立控制 (Zone Management)**：内置 6 个灯带分区，每个分区可以独立设置：
+  - 音频特效：Audio VU（音频进度条）、Audio Blink（音频闪烁）
+  - 基础特效：Solid（常亮）、Breathe（呼吸）、Rainbow（彩虹）、Chase（流水跑马）、Off（关闭）
+  - 独立颜色与亮度控制。
+- **⚡ 全局控制**：一键总开关 (Power Switch)、全局亮度控制。
+- **🐛 ESP32-S3 兼容修复**：底层修复了 ESP32-S3 在 Arduino 框架下 WiFi 与高频任务抢占导致的 Beacon 断流 Bug。
 
-## 🧰 硬件需求 (Hardware Requirements)
+## 🛠️ 硬件清单
 
-*   **主控**：ESP32-S3 / ESP32 开发板
-*   **麦克风**：INMP441 等 I2S 数字麦克风模块
-*   **灯带**：WS2812 / WS2812B RGB 灯带 (默认配置为 48 颗 LED)
-*   *建议为灯带提供独立 5V 供电，切勿直接使用开发板 5V 引脚以防烧毁*
+1. 开发板: **ESP32** / **ESP32-S3** 系列开发板
+2. LED 灯带: **WS2812B** (代码中默认配置为 48 颗 LED)
+3. 麦克风: **I2S 麦克风模块** (强烈推荐 INMP441)
+4. **电源**：若灯珠较多，请为灯带提供独立 5V 供电，并与 ESP32 共地。
 
-## 🔌 引脚接线 (Pinout)
+## 🔌 接线说明
 
-*可以在代码开头的 `#define` 中自定义*
+可以在代码头部的宏定义中自行修改引脚。默认接线如下：
 
-| I2S 麦克风 | ESP32-S3 引脚 | 说明 |
-| :--- | :--- | :--- |
-| **WS (L/R)** | GPIO 5 | 字选择 (Word Select) |
-| **SCK (BCLK)** | GPIO 6 | 串行时钟 (Serial Clock) |
-| **SD (DOUT)** | GPIO 4 | 串行数据输出 |
-| **L/R** | GND | 左右声道选择 (接GND选择左声道) |
-| **VDD/GND** | 3.3V / GND | 电源 |
+### I2S 麦克风 (例如 INMP441)
+| INMP441 引脚 | ESP32 引脚 | 说明 |
+| :---: | :---: | :--- |
+| **VDD** | 3.3V | 供电 |
+| **GND** | GND | 接地 |
+| **L/R** | GND | 接地 (配置为左声道/右声道使用) |
+| **WS (LRCK)** | GPIO 5 | 字选择 / 左右时钟 |
+| **SCK (BCLK)** | GPIO 6 | 串行数据时钟 |
+| **SD (DOUT)** | GPIO 4 | 音频数据输出 |
 
-| WS2812 灯带 | ESP32-S3 引脚 | 说明 |
-| :--- | :--- | :--- |
-| **DIN (数据)** | GPIO 3 | 灯带数据输入 |
-| **VCC/GND** | 5V / GND | 请使用外部电源独立供电 |
+### WS2812B 灯带
+| WS2812B | ESP32 引脚 | 说明 |
+| :---: | :---: | :--- |
+| **5V** | 5V 独立电源 | 灯带供电 |
+| **GND** | GND | 必须与 ESP32 共地 |
+| **DIN** | GPIO 13 | 数据控制引脚 |
 
-## 📦 依赖库 (Dependencies)
+## 💻 软件依赖与编译
 
-请在 Arduino IDE 的“库管理器”中安装以下库：
-1.  **arduinoFFT** (版本建议 2.x) - 用于频谱分析计算
-2.  **Freenove WS2812 Lib for ESP32** - 专为 ESP32 优化的轻量级免中断 RMT LED 驱动
+在使用 Arduino IDE 编译前，请确保安装了以下依赖库（可通过 Library Manager 搜索安装）：
 
-*(其余如 `WiFi`, `WebServer`, `driver/i2s.h`, `esp_wifi.h` 均为 ESP32 Arduino Core 自带无需额外安装)*
+- `arduinoFFT` - 用于快速傅里叶变换。
+- `Freenove_WS2812_Lib_for_ESP32` - 专为 ESP32 优化的 WS2812 驱动库（支持 RMT / I2S DMA 以防闪烁）。
 
-## 🚀 快速上手 (Quick Start)
+## 🚀 如何使用
 
-1.  在 Arduino IDE 中选择您的 ESP32 / ESP32-S3 开发板，编译并烧录。
-2.  板子启动后，将释放一个无需外网的 WiFi 热点：
-    *   **SSID (WiFi名称)**：`ESP32_Audio_LED`
-    *   **Password (密码)**：`12345678`
-3.  手机或电脑连接该热点。
-4.  打开浏览器，访问控制面板：**`http://192.168.4.1`**
-5.  在网页面板中开启你想玩的音频特效，播放音乐看灯带跳动吧！
+1. 将代码烧录至 ESP32。
+2. 设备启动后，会建立一个 WiFi 局域网热点。
+    - **WiFi 名字 (SSID)**: `ESP32_Audio_LED`
+    - **WiFi 密码**: `12345678`
+3. 使用手机或电脑连接该 WiFi。
+4. 打开浏览器，访问 **http://192.168.4.1**
+5. 在美观的暗色控制面板中尽情调节吧：
+    - **Power State**: 点击切换全局灯光开关。
+    - **Noise Floor**: 如果房间很安静但灯光闪烁，请适度调大该值（如 0.8~2.0）。
+    - **Peak Signal**: 如果很大声灯光才能填满，请适度调小该值（如 5.0~15.0）。
+    - **Zone Panel**: 单独改变 A~F 6个分区的颜色及律动模式。
 
-## 🛠️ 参数调优 (Tuning)
-
-如果环境嘈杂，或麦克风灵敏度不同，可以在代码中修改以下参数：
+## 📂 定制分区 (代码修改)
+如果你的灯带不是 48 颗，或者想重新划分六个频段的长度，请在代码中修改以下数组：
 
 ```cpp
-#define NOISE_FLOOR     0.8  // 底噪门限：安静时灯还会亮就调大它 (0.5~3.0)
-#define PEAK_SIGNAL     5.0  // 满载峰值：灯太容易全亮就调大它，不容易亮就调小 (10.0~30.0)
+#define LED_COUNT   48  // 你的灯带总灯珠数
+...
+// ZONE_START: 分区起始 LED 的索引
+const int ZONE_START[ZONE_COUNT] = {  0, 18, 20, 38, 40, 44 };
+// ZONE_SIZE: 该分区包含的 LED 个数
+const int ZONE_SIZE[ZONE_COUNT]  = { 18,  2, 18,  2,  4,  4 };
 ```
 
-## 📜 许可 (License)
-MIT License. Feel free to use it and modify it for your own projects!
+## 📜 许可证 (License)
+
+MIT License. 欢迎各类 Fork 与魔改！
