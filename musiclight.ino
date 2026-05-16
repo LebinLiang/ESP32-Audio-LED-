@@ -6,7 +6,7 @@
 #include "Freenove_WS2812_Lib_for_ESP32.h"
 
 // ================= 硬件引脚定义 =================
-#define LED_PIN     3
+#define LED_PIN     13
 #define LED_COUNT   48
 #define LED_CHANNEL 0
 #define ZONE_COUNT  6
@@ -22,8 +22,8 @@
 #define SAMPLING_FREQ   16000 
 
 // 【全新量级的门限参数】(数据已归一化，现在非常精准)
-#define NOISE_FLOOR     0.8   // 底噪门限：建议在 0.5 ~ 3.0 之间。如果安静时灯还会微亮，调大它。
-#define PEAK_SIGNAL     5.0  // 满载峰值：建议在 10.0 ~ 30.0 之间。如果你要很大声灯才能全亮，调小它。
+double noiseFloor = 0.7;  // 底噪门限：建议在 0.5 ~ 3.0 之间。如果安静时灯还会微亮，调大它。
+double peakSignal = 9.0;  // 满载峰值：建议在 10.0 ~ 30.0 之间。如果你要很大声灯才能全亮，调小它。
 
 double vReal[SAMPLES];
 double vImag[SAMPLES];
@@ -34,7 +34,8 @@ uint8_t audioBands[6] = {0};
 
 // 全局设置参数
 bool enableDebug = false;        
-uint8_t globalBrightness = 180;  
+uint8_t globalBrightness = 255;  
+bool isPowerOn = true;
 
 // AP 热点配置
 const char *ap_ssid = "ESP32_Audio_LED"; 
@@ -185,14 +186,19 @@ void handleRoot() {
     "color:#111;font-weight:bold;cursor:pointer}"
     "</style></head><body><h2>LED Audio Ctrl</h2>";
 
-  char g_buf[512];
+  char g_buf[1024];
   snprintf(g_buf, sizeof(g_buf),
     "<div class='panel'>"
+    "<b>Power State: </b><button id='btn_pwr' onclick='tp()'>%s</button><br><br>"
     "<b>Global Brightness: </b><input type=range id='g_br' min=0 max=255 value=%d onchange='sg()'><br><br>"
     "<b>Debug Print Output: </b><select id='g_dbg' onchange='sg()'>"
-    "<option value=0%s>OFF</option><option value=1%s>ON</option></select>"
+    "<option value=0%s>OFF</option><option value=1%s>ON</option></select><br><br>"
+    "<b>Noise Floor: </b><input type=number id='g_nf' step=0.1 min=0 value=%.1f onchange='sg()'><br><br>"
+    "<b>Peak Signal: </b><input type=number id='g_ps' step=0.1 min=0 value=%.1f onchange='sg()'>"
     "</div><table><tr><th>Zone</th><th>Effect</th><th>Color</th><th>Brightness</th><th></th></tr>",
-    globalBrightness, enableDebug ? "" : " selected", enableDebug ? " selected" : ""
+    isPowerOn ? "ON" : "OFF",
+    globalBrightness, enableDebug ? "" : " selected", enableDebug ? " selected" : "",
+    noiseFloor, peakSignal
   );
   h += g_buf;
 
@@ -218,7 +224,16 @@ void handleRoot() {
     h += row;
   }
 
-  h += "</table><script>"
+  char js_buf[256];
+  snprintf(js_buf, sizeof(js_buf), "var pwr = %d;", isPowerOn ? 1 : 0);
+  h += "</table><script>";
+  h += js_buf;
+  h +=
+    "function tp(){"
+      "pwr = 1 - pwr;"
+      "document.getElementById('btn_pwr').innerText = pwr ? 'ON' : 'OFF';"
+      "var x=new XMLHttpRequest(); x.open('GET','/global?pwr='+pwr); x.send();"
+    "}"
     "function s(i){"
       "var c=document.getElementById('c'+i).value;"
       "var r=parseInt(c.slice(1,3),16), g=parseInt(c.slice(3,5),16), b=parseInt(c.slice(5,7),16);"
@@ -228,19 +243,30 @@ void handleRoot() {
     "}"
     "function sg(){"
       "var br=document.getElementById('g_br').value, dbg=document.getElementById('g_dbg').value;"
-      "var x=new XMLHttpRequest(); x.open('GET','/global?br='+br+'&dbg='+dbg); x.send();"
+      "var nf=document.getElementById('g_nf').value, ps=document.getElementById('g_ps').value;"
+      "var x=new XMLHttpRequest(); x.open('GET','/global?br='+br+'&dbg='+dbg+'&nf='+nf+'&ps='+ps); x.send();"
     "}"
     "</script></body></html>";
   server.send(200,"text/html",h);
 }
 
 void handleGlobal() {
+  if(server.hasArg("pwr")) {
+    isPowerOn = (server.arg("pwr").toInt() == 1);
+    strip.setBrightness(isPowerOn ? globalBrightness : 0);
+  }
   if(server.hasArg("br")) {
     globalBrightness = constrain(server.arg("br").toInt(), 0, 255);
-    strip.setBrightness(globalBrightness); 
+    if (isPowerOn) strip.setBrightness(globalBrightness); 
   }
   if(server.hasArg("dbg")) {
     enableDebug = (server.arg("dbg").toInt() == 1);
+  }
+  if(server.hasArg("nf")) {
+    noiseFloor = server.arg("nf").toDouble();
+  }
+  if(server.hasArg("ps")) {
+    peakSignal = server.arg("ps").toDouble();
   }
   server.send(200, "text/plain", "Global OK");
 }
@@ -323,9 +349,9 @@ void audioTask(void *pvParameters) {
         maxEnergy = maxEnergy * bandEQ[b]; // 补偿高音
 
         int mapped = 0;
-        if (maxEnergy > NOISE_FLOOR) {
-          // 将能量从 [NOISE_FLOOR, PEAK_SIGNAL] 映射到 [0, 255]
-          mapped = (int)((maxEnergy - NOISE_FLOOR) * 255.0 / (PEAK_SIGNAL - NOISE_FLOOR));
+        if (maxEnergy > noiseFloor) {
+          // 将能量从 [noiseFloor, peakSignal] 映射到 [0, 255]
+          mapped = (int)((maxEnergy - noiseFloor) * 255.0 / (peakSignal - noiseFloor));
           mapped = constrain(mapped, 0, 255);
         }
         
